@@ -197,7 +197,7 @@ function start(opts) {
             // input files exists in the data config, return found id
             return dataItemId;
           } else {
-            if (!allowMoreData) {
+            if (!allowMoreData || options.serveAllData) {
               console.log(
                 `ERROR: style "${item.style}" using unknown file "${styleSourceId}"! Skipping...`,
               );
@@ -279,6 +279,14 @@ function start(opts) {
     }),
   );
 
+  const addData = (id, item, addToStartupPromises) => {
+    data[id] = item;
+    const serve_data_promise = serve_data.add(options, serving.data, item, id, opts.publicUrl)
+    if (addToStartupPromises) {
+      startupPromises.push(serve_data_promise);
+    }
+  };
+
   for (const id of Object.keys(data)) {
     const item = data[id];
     const fileType = Object.keys(data[id])[0];
@@ -288,10 +296,28 @@ function start(opts) {
       );
       continue;
     }
+    addData(id, item, true);
+  }
 
-    startupPromises.push(
-      serve_data.add(options, serving.data, item, id, opts.publicUrl),
-    );
+  // watch for changes in the mbtiles directory
+  if (options.serveAllData) {
+    const watcher = chokidar.watch(path.join(options.paths.mbtiles, '*.mbtiles'), {});
+    watcher.on('all',
+      (eventType, filename) => {
+        if (filename && ['add', 'change', 'unlink'].includes(eventType)) {
+          let id = path.basename(filename, '.mbtiles');
+          console.log(`Data "${id}" added/changed/removed, updating...`);
+          serve_data.remove(serving.data, id);
+          delete data[id];
+          
+          if (eventType == "add" || eventType == "change") {
+            let item = {
+              mbtiles: filename
+            };
+            addData(id, item, false);
+          }
+        }
+      });
   }
 
   if (options.serveAllStyles) {
