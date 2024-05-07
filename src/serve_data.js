@@ -17,6 +17,11 @@ import {
   getPMtilesTile,
 } from './pmtiles_adapter.js';
 
+const EMPTY_PNG_TILE_256 = zlib.gzipSync(Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAQAAAD2e2DtAAABu0lEQVR42u3SQREAAAzCsOHf9F6oIJXQS07TxQIABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAgAACwAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAAsAEAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAKg9kK0BATSHu+YAAAAASUVORK5CYII=',
+  'base64',
+));
+
 export const serve_data = {
   init: (options, repo) => {
     const app = express().disable('x-powered-by');
@@ -98,6 +103,12 @@ export const serve_data = {
             let isGzipped;
             if (err) {
               if (/does not exist/.test(err.message)) {
+                if (format === 'png') {
+                  headers = { 'Content-Type': 'image/png' };
+                  headers['Content-Encoding'] = 'gzip';
+                  res.set(headers);
+                  return res.status(200).send(EMPTY_PNG_TILE_256);
+                }
                 return res.status(204).send();
               } else {
                 return res
