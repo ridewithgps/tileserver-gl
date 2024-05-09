@@ -285,6 +285,9 @@ function start(opts) {
     if (addToStartupPromises) {
       startupPromises.push(serve_data_promise);
     }
+    serve_data_promise.catch((err) => {
+      console.log(`ERROR Adding data source:${id}. Error: ${err.message}, ${new Date().toISOString()}`);
+    })
   };
 
   for (const id of Object.keys(data)) {
@@ -301,12 +304,13 @@ function start(opts) {
 
   // watch for changes in the mbtiles directory
   if (options.serveAllData) {
-    const watcher = chokidar.watch(path.join(options.paths.mbtiles, '*.mbtiles'), {});
+    // must have await finish to prevent an incomplete (corrupt) SQLITE database being added to the server
+    const watcher = chokidar.watch(path.join(options.paths.mbtiles, '*.mbtiles'), {awaitWriteFinish: true});
     watcher.on('all',
       (eventType, filename) => {
         if (filename && ['add', 'change', 'unlink'].includes(eventType)) {
           let id = path.basename(filename, '.mbtiles');
-          console.log(`Data "${id}" added/changed/removed, updating...`);
+          console.log(`Data "${id}"; Event: ${eventType}, updating...`);
           serve_data.remove(serving.data, id);
           delete data[id];
           
