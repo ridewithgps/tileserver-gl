@@ -126,6 +126,12 @@ export const serve_data = {
               }
             } else {
               if (data == null) {
+                if (format === 'png') {
+                  const headers = { 'Content-Type': 'image/png' };
+                  headers['Content-Encoding'] = 'gzip';
+                  res.set(headers);
+                  return res.status(200).send(EMPTY_PNG_TILE_256);
+                }
                 return res.status(404).send('Not found');
               } else {
                 if (tileJSONFormat === 'pbf') {
