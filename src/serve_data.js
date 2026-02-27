@@ -603,4 +603,15 @@ export const serve_data = {
       sparse,
     };
   },
+  remove: function (repo, id) {
+    const item = repo[id];
+    if (item && item.source && typeof item.source.close === 'function') {
+      item.source.close((err) => {
+        if (err) {
+          console.log(`WARN: Error closing source for "${id}": ${err.message}`);
+        }
+      });
+    }
+    delete repo[id];
+  },
 };

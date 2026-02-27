@@ -244,7 +244,7 @@ async function start(opts) {
             // input files exists in the data config, return found id
             return dataItemId;
           } else {
-            if (!allowMoreData) {
+            if (!allowMoreData || options.serveAllData) {
               console.log(
                 `ERROR: style "${item.style}" using unknown file "${styleSourceId}"! Skipping...`,
               );
@@ -456,6 +456,26 @@ async function start(opts) {
 
   // Wait for styles to finish loading, then load data sources
   // This ensures data sources added by styles are included
+  const addData = (id, item, addToStartupPromises) => {
+    data[id] = item;
+    const promise = serve_data.add(options, serving.data, item, id, opts);
+    if (addToStartupPromises) {
+      return promise;
+    }
+    promise
+      .then(() => {
+        console.log(
+          `Data "${id}" loaded successfully, ${new Date().toISOString()}`,
+        );
+      })
+      .catch((err) => {
+        console.log(
+          `ERROR Adding data source:${id}. Error: ${err.message}, ${new Date().toISOString()}`,
+        );
+      });
+    return null;
+  };
+
   startupPromises.push(
     Promise.all(stylePromises).then(() => {
       const dataLoadPromises = [];
@@ -470,13 +490,34 @@ async function start(opts) {
           continue;
         }
 
-        dataLoadPromises.push(
-          serve_data.add(options, serving.data, item, id, opts),
-        );
+        const p = addData(id, item, true);
+        if (p) dataLoadPromises.push(p);
       }
       return Promise.all(dataLoadPromises);
     }),
   );
+
+  if (options.serveAllData) {
+    const dataWatcher = chokidar.watch(options.paths.mbtiles, {
+      awaitWriteFinish: true,
+      depth: 0,
+      ignored: (filePath, stats) =>
+        stats?.isFile() && !filePath.endsWith('.mbtiles'),
+    });
+    dataWatcher.on('all', (eventType, filename) => {
+      if (filename && ['add', 'change', 'unlink'].includes(eventType)) {
+        const id = path.basename(filename, '.mbtiles');
+        console.log(`Data "${id}"; Event: ${eventType}, updating...`);
+        serve_data.remove(serving.data, id);
+        delete data[id];
+
+        if (eventType === 'add' || eventType === 'change') {
+          const item = { mbtiles: filename };
+          addData(id, item, false);
+        }
+      }
+    });
+  }
 
   startupPromises.push(
     serve_font(options, serving.fonts, opts).then((sub) => {
