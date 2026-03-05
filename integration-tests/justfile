@@ -1,0 +1,71 @@
+set dotenv-load
+
+default_duration := "60"
+default_concurrency := "5"
+base_url := "http://localhost:${TILESERVER_PORT:-8080}"
+mbtiles_dir := env("TEST_DATA_DIR", "") + "/mbtiles"
+
+# Start tileserver container (fresh logs every time)
+up:
+    docker compose down --remove-orphans 2>/dev/null || true
+    docker compose up -d --build --wait
+
+# Stop tileserver container
+down:
+    docker compose down
+
+# Restart tileserver (picks up src/ changes without rebuild)
+restart:
+    docker compose restart
+
+# Run all tests
+test duration=default_duration concurrency=default_concurrency:
+    uv run pytest -v -s --base-url={{base_url}} \
+        --duration={{duration}} --concurrency={{concurrency}} \
+        --mbtiles-dir={{mbtiles_dir}}
+
+# Fast correctness check (~3s)
+correctness:
+    uv run pytest tests/correctness/ -v --base-url={{base_url}}
+
+# All stability tests
+stability duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/stability/ -v -s --base-url={{base_url}} \
+        --duration={{duration}} --concurrency={{concurrency}} \
+        --mbtiles-dir={{mbtiles_dir}}
+
+# Renderer stress + sustained load (crash detection)
+stability-renderer duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/stability/test_renderer_stress.py tests/stability/test_sustained_load.py -v -s \
+        --base-url={{base_url}} --duration={{duration}} --concurrency={{concurrency}}
+
+# Dynamic mbtiles loading (add/remove/churn)
+stability-loading duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/stability/test_dynamic_loading.py -v -s \
+        --base-url={{base_url}} --duration={{duration}} --concurrency={{concurrency}} \
+        --mbtiles-dir={{mbtiles_dir}}
+
+# Performance benchmarks
+performance duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/performance/ -v -s --base-url={{base_url}} \
+        --duration={{duration}} --concurrency={{concurrency}}
+
+# Generate/update visual reference images
+update-references:
+    uv run pytest tests/correctness/test_visual.py -v --base-url={{base_url}} --update-references
+
+# Regenerate tile sample coordinates from mbtiles metadata
+generate-samples:
+    uv run generate_tile_samples.py {{mbtiles_dir}}
+
+# Install test dependencies
+sync:
+    uv sync
+
+# Show collected test counts by suite (helps keep README counts current)
+count-tests:
+    @echo "Collecting integration test counts..."
+    @echo "Total: $(uv run pytest --collect-only -q | rg '^tests/' | wc -l)"
+    @echo "Correctness: $(uv run pytest --collect-only -q tests/correctness | rg '^tests/' | wc -l)"
+    @echo "Stability: $(uv run pytest --collect-only -q tests/stability | rg '^tests/' | wc -l)"
+    @echo "Performance: $(uv run pytest --collect-only -q tests/performance | rg '^tests/' | wc -l)"
