@@ -20,7 +20,18 @@ import { gunzipP, gzipP } from './promises.js';
 import { openMbTilesWrapper } from './mbtiles_wrapper.js';
 
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'url';
+
+// Pre-computed 256x256 PNG with every pixel set to RGB(1, 134, 160) — Mapbox
+// Terrain-RGB encoding for 0m elevation (sea level). Served for missing
+// elevation tiles so MapLibre raster-dem sources don't choke on 404 or 204.
+const BLANK_TERRAIN_TILE = zlib.gzipSync(
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAB/UlEQVR42u3TQREAAAQAQYSXQ1RvGexGuJnL7An4qiTAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAbAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGgGsBhjkDJzJVFysAAAAASUVORK5CYII=',
+    'base64',
+  ),
+);
 
 const packageJson = JSON.parse(
   fs.readFileSync(
@@ -108,7 +119,16 @@ export const serve_data = {
         x,
         y,
       );
-      if (fetchTile == null) return res.status(204).send();
+      if (fetchTile == null) {
+        if (req.params.id.includes('elevation')) {
+          res.set({
+            'Content-Type': 'image/png',
+            'Content-Encoding': 'gzip',
+          });
+          return res.status(200).send(BLANK_TERRAIN_TILE);
+        }
+        return res.status(204).send();
+      }
 
       let data = fetchTile.data;
       let headers = fetchTile.headers;
@@ -419,5 +439,16 @@ export const serve_data = {
       source,
       sourceType,
     };
+  },
+  remove: function (repo, id) {
+    const item = repo[id];
+    if (item && item.source && typeof item.source.close === 'function') {
+      item.source.close((err) => {
+        if (err) {
+          console.log(`WARN: Error closing source for "${id}": ${err.message}`);
+        }
+      });
+    }
+    delete repo[id];
   },
 };
