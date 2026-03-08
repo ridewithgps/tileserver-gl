@@ -28,6 +28,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(
   fs.readFileSync(__dirname + '/../package.json', 'utf8'),
 );
+const FLAT_SUFFIX = '-flat';
 const isLight = packageJson.name.slice(-6) === '-light';
 
 const serve_rendered = (
@@ -173,33 +174,74 @@ async function start(opts) {
     );
   }
   /**
+   * Create a style variant with raster-dem sources and hillshade layers removed.
+   * Returns null if the style has no raster-dem sources.
+   * NOTE: Mutates the input object — caller must pass a dedicated copy.
+   */
+  function createFlatStyleVariant(styleJSON) {
+    const demSourceIds = new Set();
+    for (const [id, source] of Object.entries(styleJSON.sources || {})) {
+      if (source.type === 'raster-dem') {
+        demSourceIds.add(id);
+        delete styleJSON.sources[id];
+      }
+    }
+
+    if (demSourceIds.size === 0) return null;
+
+    styleJSON.layers = (styleJSON.layers || []).filter(
+      (layer) => !demSourceIds.has(layer.source),
+    );
+
+    if (styleJSON.name) {
+      styleJSON.name += ' (flat)';
+    }
+
+    return styleJSON;
+  }
+
+  /**
    * Adds a style to the server.
    * @param {string} id - The ID of the style.
    * @param {object} item - The style configuration object.
    * @param {boolean} allowMoreData - Whether to allow adding more data sources.
    * @param {boolean} reportFonts - Whether to report fonts.
-   * @returns {Promise<void>}
+   * @param {object} [styleJSONOverride] - Pre-built style JSON, bypassing file/URL loading.
+   * @returns {Promise<Object|null>} The raw (pre-mutation) styleJSON on success, null on failure.
    */
-  async function addStyle(id, item, allowMoreData, reportFonts) {
+  async function addStyle(
+    id,
+    item,
+    allowMoreData,
+    reportFonts,
+    styleJSONOverride,
+  ) {
     let success = true;
 
     let styleJSON;
-    try {
-      if (isValidHttpUrl(item.style)) {
-        const res = await fetch(item.style);
-        if (!res.ok) {
-          throw new Error(`fetch error ${res.status}`);
+    if (styleJSONOverride) {
+      styleJSON = styleJSONOverride;
+    } else {
+      try {
+        if (isValidHttpUrl(item.style)) {
+          const res = await fetch(item.style);
+          if (!res.ok) {
+            throw new Error(`fetch error ${res.status}`);
+          }
+          styleJSON = await res.json();
+        } else {
+          const styleFile = path.resolve(options.paths.styles, item.style);
+          const styleFileData = await fs.promises.readFile(styleFile);
+          styleJSON = JSON.parse(styleFileData);
         }
-        styleJSON = await res.json();
-      } else {
-        const styleFile = path.resolve(options.paths.styles, item.style);
-        const styleFileData = await fs.promises.readFile(styleFile);
-        styleJSON = JSON.parse(styleFileData);
+      } catch (e) {
+        console.log(`Error getting style file "${item.style}"`);
+        return null;
       }
-    } catch (e) {
-      console.log(`Error getting style file "${item.style}"`);
-      return false;
     }
+
+    // Deep-copy before downstream functions mutate it
+    const rawStyleJSON = clone(styleJSON);
 
     if (item.serve_data !== false) {
       success = serve_style.add(
@@ -292,18 +334,40 @@ async function start(opts) {
         item.serve_rendered = false;
       }
     }
-    return success;
+    return success ? rawStyleJSON : null;
   }
 
   const stylePromises = [];
+  const flatVariants = []; // deferred until base styles are loaded
   for (const id of Object.keys(config.styles || {})) {
     const item = config.styles[id];
     if (!item.style || item.style.length === 0) {
       console.log(`Missing "style" property for ${id}`);
       continue;
     }
-    stylePromises.push(addStyle(id, item, true, true));
+    stylePromises.push(
+      addStyle(id, item, true, true).then((rawStyleJSON) => {
+        if (!rawStyleJSON) return;
+        const flatStyleJSON = createFlatStyleVariant(rawStyleJSON);
+        if (flatStyleJSON) {
+          flatVariants.push({
+            flatId: `${id}${FLAT_SUFFIX}`,
+            flatItem: { ...item },
+            flatStyleJSON,
+          });
+        }
+      }),
+    );
   }
+
+  // Wait for base styles, then register flat variants
+  await Promise.all(stylePromises);
+  const flatPromises = [];
+  for (const { flatId, flatItem, flatStyleJSON } of flatVariants) {
+    flatPromises.push(addStyle(flatId, flatItem, false, false, flatStyleJSON));
+    console.log(`Style "${flatId}" auto-generated (raster-dem sources removed)`);
+  }
+  await Promise.all(flatPromises);
 
   // Wait for styles to finish loading, then load data sources
   // This ensures data sources added by styles are included
@@ -327,26 +391,23 @@ async function start(opts) {
     return null;
   };
 
-  startupPromises.push(
-    Promise.all(stylePromises).then(() => {
-      const dataLoadPromises = [];
-      for (const id of Object.keys(data)) {
-        // eslint-disable-next-line security/detect-object-injection -- id is from Object.keys of data config
-        const item = data[id];
+  // Styles (including flat variants) are already loaded — load data sources now
+  const dataLoadPromises = [];
+  for (const id of Object.keys(data)) {
+    // eslint-disable-next-line security/detect-object-injection -- id is from Object.keys of data config
+    const item = data[id];
 
-        if (!item.pmtiles && !item.mbtiles) {
-          console.log(
-            `Missing "pmtiles" or "mbtiles" property for ${id} data source`,
-          );
-          continue;
-        }
+    if (!item.pmtiles && !item.mbtiles) {
+      console.log(
+        `Missing "pmtiles" or "mbtiles" property for ${id} data source`,
+      );
+      continue;
+    }
 
-        const p = addData(id, item, true);
-        if (p) dataLoadPromises.push(p);
-      }
-      return Promise.all(dataLoadPromises);
-    }),
-  );
+    const p = addData(id, item, true);
+    if (p) dataLoadPromises.push(p);
+  }
+  startupPromises.push(Promise.all(dataLoadPromises));
 
   if (options.serveAllData) {
     const dataWatcher = chokidar.watch(options.paths.mbtiles, {
@@ -359,11 +420,12 @@ async function start(opts) {
       if (filename && ['add', 'change', 'unlink'].includes(eventType)) {
         const id = path.basename(filename, '.mbtiles');
         console.log(`Data "${id}"; Event: ${eventType}, updating...`);
+        const prevItem = data[id];
         serve_data.remove(serving.data, id);
         delete data[id];
 
         if (eventType === 'add' || eventType === 'change') {
-          const item = { mbtiles: filename };
+          const item = { ...prevItem, mbtiles: filename };
           addData(id, item, false);
         }
       }
