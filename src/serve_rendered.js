@@ -1219,6 +1219,14 @@ export const serve_rendered = {
                     req.url,
                   );
                 }
+                if (sourceInfo.type === 'raster-dem') {
+                  // Signal "no content" — the tile loads successfully but
+                  // is not renderable, so backfillBorder is skipped entirely.
+                  // This is maplibre-native's designed path for missing
+                  // DEM tiles (equivalent to HTTP 204).
+                  callback();
+                  return;
+                }
                 createEmptyResponse(
                   sourceInfo.format,
                   sourceInfo.color,
