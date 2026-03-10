@@ -1,0 +1,40 @@
+pipeline {
+    agent {
+        kubernetes {
+            yamlFile 'jobs/kaniko.yaml'
+            defaultContainer 'kaniko'
+        }
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout([$class: 'GitSCM',
+                          branches: [[name: '*/master']],
+                          extensions: [
+                            cloneOption(depth: 1, noTags: false, reference: '', shallow: true)
+                          ],
+                          userRemoteConfigs: [[url: 'git@github.com:ridewithgps/tileserver-gl.git',
+                            credentialsId: 'jenkins_ssh']]])
+            }
+        }
+
+        stage('Build Container') {
+            environment {
+                PATH        = "/busybox:$PATH"
+                REGISTRY    = 'registry.ridewithgps.com'
+                REPOSITORY  = 'rwgps'
+                IMAGE       = 'tileserver-integration-tests'
+                TAG         = '1.0.0'
+            }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'jenkins_ssh', keyFileVariable: 'jenkinsPrivateKey')]) {
+                    container(name: 'kaniko', shell: '/busybox/sh') {
+                        sh 'cp ${jenkinsPrivateKey} id_rsa'
+                        sh "/kaniko/executor -f `pwd`/integration-tests/Dockerfile -c `pwd`/integration-tests --use-new-run --snapshot-mode=redo --destination=${REGISTRY}/${REPOSITORY}/${IMAGE}:${TAG}"
+                    }
+                }
+            }
+        }
+    }
+}
