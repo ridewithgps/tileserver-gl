@@ -1,0 +1,59 @@
+set dotenv-load
+
+default_duration := "60"
+default_concurrency := "5"
+style := "rwgpscycle"
+base_url := env("TILESERVER_URL", "http://localhost:8080")
+test_data_dir := env("TEST_DATA_DIR", "")
+mbtiles_dir := if test_data_dir != "" { test_data_dir + "/mbtiles" } else { "" }
+mbtiles_dir_flag := if mbtiles_dir != "" { "--mbtiles-dir=" + mbtiles_dir } else { "" }
+
+# Start tileserver container (fresh logs every time)
+up:
+    docker compose down --remove-orphans 2>/dev/null || true
+    docker compose up -d --build --wait
+
+# Stop tileserver container
+down:
+    docker compose down
+
+# Run all tests (correctness → stability → performance)
+test duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/correctness/ tests/stability/ tests/performance/ -v -s \
+        --base-url={{base_url}} \
+        --duration={{duration}} --concurrency={{concurrency}} \
+        --style={{style}} {{mbtiles_dir_flag}}
+
+# Fast correctness check (~3s)
+correctness:
+    uv run pytest tests/correctness/ -v --base-url={{base_url}}
+
+# Stability tests (DEM boundary + dynamic loading)
+stability:
+    uv run pytest tests/stability/ -v -s --base-url={{base_url}} {{mbtiles_dir_flag}}
+
+# Performance benchmarks
+performance duration=default_duration concurrency=default_concurrency:
+    uv run pytest tests/performance/ -v -s --base-url={{base_url}} \
+        --duration={{duration}} --concurrency={{concurrency}} \
+        --style={{style}}
+
+# Generate/update visual reference images
+update-references:
+    uv run pytest tests/correctness/test_visual.py -v --base-url={{base_url}} --update-references
+
+# Regenerate tile sample coordinates from mbtiles metadata
+generate-samples:
+    uv run generate_tile_samples.py {{mbtiles_dir}}
+
+# DEM boundary segfault test
+dem-boundary:
+    uv run pytest tests/stability/test_dem_boundary.py -v --base-url={{base_url}}
+
+# Regenerate DEM boundary tiles from elevation mbtiles
+generate-dem-boundaries mbtiles_path=(mbtiles_dir + "/elevation.mbtiles"):
+    uv run generate_dem_boundaries.py {{mbtiles_path}}
+
+# Install test dependencies
+sync:
+    uv sync

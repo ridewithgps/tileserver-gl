@@ -1,0 +1,11 @@
+{
+  "_comment": "Baselines from v5.3.0 Docker on dev hardware (10 workers, 30s). Set ~20% below measured. Adjust for your hardware.",
+  "rendered_png": {
+    "min_tiles_per_sec": 30,
+    "max_p95_ms": 900
+  },
+  "rendered_webp": {
+    "min_tiles_per_sec": 30,
+    "max_p95_ms": 900
+  }
+}

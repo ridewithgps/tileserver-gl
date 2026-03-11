@@ -1,0 +1,68 @@
+pipeline {
+    agent {
+        kubernetes {
+            yamlFile 'jobs/tileserver-integration-tests.yaml'
+            defaultContainer 'tileserver-integration-tests'
+        }
+    }
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'TILESERVER_URL', defaultValue: 'https://vector-test.ridewithgps.com', description: 'Tileserver URL to test against')
+        string(name: 'DURATION', defaultValue: '60', description: 'Duration in seconds for performance benchmarks')
+        string(name: 'CONCURRENCY', defaultValue: '5', description: 'Number of concurrent workers for performance benchmarks')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout([$class: 'GitSCM',
+                          branches: [[name: '*/master']],
+                          extensions: [
+                            cloneOption(depth: 1, noTags: false, reference: '', shallow: true)
+                          ],
+                          userRemoteConfigs: [[url: 'git@github.com:ridewithgps/tileserver-gl.git',
+                            credentialsId: 'jenkins_ssh']]])
+            }
+        }
+
+        stage('Install') {
+            steps {
+                dir('integration-tests') {
+                    sh 'uv sync --frozen'
+                }
+            }
+        }
+
+        stage('Stability') {
+            steps {
+                dir('integration-tests') {
+                    sh "uv run pytest tests/stability/ -v -s --base-url=${params.TILESERVER_URL}"
+                }
+            }
+        }
+
+        stage('Correctness') {
+            steps {
+                dir('integration-tests') {
+                    sh "uv run pytest tests/correctness/ -v --base-url=${params.TILESERVER_URL}"
+                }
+            }
+        }
+
+        stage('Performance') {
+            steps {
+                dir('integration-tests') {
+                    sh """uv run pytest tests/performance/ -v -s \
+                        --base-url=${params.TILESERVER_URL} \
+                        --duration=${params.DURATION} \
+                        --concurrency=${params.CONCURRENCY}"""
+                }
+            }
+        }
+    }
+
+}
