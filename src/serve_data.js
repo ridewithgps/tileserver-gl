@@ -14,6 +14,7 @@ import {
   getTileUrls,
   isValidHttpUrl,
   fetchTileData,
+  projectToTilePixel,
 } from './utils.js';
 import { getPMtilesInfo, openPMtiles } from './pmtiles_adapter.js';
 import { gunzipP, gzipP } from './promises.js';
@@ -297,9 +298,11 @@ export const serve_data = {
           if (zoom > tileJSON.maxzoom) {
             zoom = tileJSON.maxzoom;
           }
-          bbox = [x, y, x + 0.1, y + 0.1];
-          const { minX, minY } = new SphericalMercator().xyz(bbox, zoom);
-          xy = [minX, minY];
+          bbox = [x, y, x, y];
+          // Same projection as getTerrainElevation so the fetched tile matches
+          // the sampled pixel.
+          const { xTile, yTile } = projectToTilePixel(x, y, zoom, TILE_SIZE);
+          xy = [xTile, yTile];
         }
 
         const fetchTile = await fetchTileData(
