@@ -20,18 +20,45 @@ import { gunzipP, gzipP } from './promises.js';
 import { openMbTilesWrapper } from './mbtiles_wrapper.js';
 
 import fs from 'node:fs';
-import zlib from 'node:zlib';
+import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 
-// Pre-computed 256x256 PNG with every pixel set to RGB(1, 134, 160) — Mapbox
-// Terrain-RGB encoding for 0m elevation (sea level). Served for missing
-// elevation tiles so MapLibre raster-dem sources don't choke on 404 or 204.
-const BLANK_TERRAIN_TILE = zlib.gzipSync(
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAB/UlEQVR42u3TQREAAAQAQYSXQ1RvGexGuJnL7An4qiTAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAYAA4ABwABgADAAGAAMAAbAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAwABgADgAHAAGAAMAAYAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGAAOAAcAAYAAwABgADAAGgGsBhjkDJzJVFysAAAAASUVORK5CYII=',
-    'base64',
-  ),
-);
+// Sea-level (0 m) RGB for each terrain-RGB encoding, i.e. the value that
+// decodes to 0 m: mapbox = -10000 + (R*65536+G*256+B)*0.1, terrarium =
+// R*256 + G + B/256 - 32768.
+const TERRAIN_SEA_LEVEL_RGB = {
+  mapbox: { r: 1, g: 134, b: 160 },
+  terrarium: { r: 128, g: 0, b: 0 },
+};
+
+const blankTerrainTileCache = {};
+
+/**
+ * Builds (and caches) a gzipped PNG of `tileSize`×`tileSize` filled with the
+ * sea-level color for `encoding`. Served for missing elevation tiles so a
+ * raster-dem source's tiles all share the same dimensions — MapLibre throws
+ * "dem dimension mismatch" when a tile borders a neighbor of a different size.
+ * @param {string} encoding - 'mapbox' or 'terrarium'.
+ * @param {number} tileSize - Tile width/height in pixels.
+ * @returns {Promise<Buffer>} Gzipped PNG.
+ */
+async function getBlankTerrainTile(encoding, tileSize) {
+  const key = `${encoding}:${tileSize}`;
+  if (!blankTerrainTileCache[key]) {
+    const png = await sharp({
+      create: {
+        width: tileSize,
+        height: tileSize,
+        channels: 3,
+        background: TERRAIN_SEA_LEVEL_RGB[encoding],
+      },
+    })
+      .png()
+      .toBuffer();
+    blankTerrainTileCache[key] = await gzipP(png);
+  }
+  return blankTerrainTileCache[key];
+}
 
 const packageJson = JSON.parse(
   fs.readFileSync(
@@ -120,12 +147,17 @@ export const serve_data = {
         y,
       );
       if (fetchTile == null) {
-        if (item.tileJSON.encoding === 'mapbox') {
+        const { encoding } = item.tileJSON;
+        if (encoding === 'mapbox' || encoding === 'terrarium') {
+          const tileSize =
+            item.tileJSON.tileSize || (encoding === 'terrarium' ? 512 : 256);
           res.set({
             'Content-Type': 'image/png',
             'Content-Encoding': 'gzip',
           });
-          return res.status(200).send(BLANK_TERRAIN_TILE);
+          return res
+            .status(200)
+            .send(await getBlankTerrainTile(encoding, tileSize));
         }
         return res.status(204).send();
       }
