@@ -34,6 +34,7 @@ import {
   fixTileJSONCenter,
   fetchTileData,
   readFile,
+  projectToTilePixel,
 } from './utils.js';
 import { openPMtiles, getPMtilesInfo } from './pmtiles_adapter.js';
 import { renderOverlay, renderWatermark, renderAttribution } from './render.js';
@@ -1642,24 +1643,12 @@ export const serve_rendered = {
         const context = canvas.getContext('2d');
         context.drawImage(image, 0, 0);
 
-        // calculate pixel coordinate of tile,
-        // see https://developers.google.com/maps/documentation/javascript/examples/map-coordinates
-        let siny = Math.sin((param['lat'] * Math.PI) / 180);
-        // Truncating to 0.9999 effectively limits latitude to 89.189. This is
-        // about a third of a tile past the edge of the world tile.
-        siny = Math.min(Math.max(siny, -0.9999), 0.9999);
-        const xWorld = param['tile_size'] * (0.5 + param['long'] / 360);
-        const yWorld =
-          param['tile_size'] *
-          (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI));
-
-        const scale = 1 << param['z'];
-
-        const xTile = Math.floor((xWorld * scale) / param['tile_size']);
-        const yTile = Math.floor((yWorld * scale) / param['tile_size']);
-
-        const xPixel = Math.floor(xWorld * scale) - xTile * param['tile_size'];
-        const yPixel = Math.floor(yWorld * scale) - yTile * param['tile_size'];
+        const { xPixel, yPixel } = projectToTilePixel(
+          param['long'],
+          param['lat'],
+          param['z'],
+          param['tile_size'],
+        );
         if (
           xPixel < 0 ||
           yPixel < 0 ||

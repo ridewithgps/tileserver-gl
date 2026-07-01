@@ -231,6 +231,35 @@ export function fixTileJSONCenter(tileJSON) {
 }
 
 /**
+ * Projects a geographic coordinate to its enclosing tile and the pixel within
+ * that tile, using the Web-Mercator world-pixel formula.
+ * See https://developers.google.com/maps/documentation/javascript/examples/map-coordinates
+ * @param {number} lon - Longitude in degrees.
+ * @param {number} lat - Latitude in degrees.
+ * @param {number} zoom - Tile zoom level.
+ * @param {number} tileSize - Tile size in pixels (e.g. 256 or 512).
+ * @returns {{xTile: number, yTile: number, xPixel: number, yPixel: number}}
+ */
+export function projectToTilePixel(lon, lat, zoom, tileSize) {
+  let siny = Math.sin((lat * Math.PI) / 180);
+  // Truncating to 0.9999 effectively limits latitude to 89.189. This is
+  // about a third of a tile past the edge of the world tile.
+  siny = Math.min(Math.max(siny, -0.9999), 0.9999);
+  const xWorld = tileSize * (0.5 + lon / 360);
+  const yWorld =
+    tileSize * (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI));
+  const scale = 1 << zoom;
+  const xTile = Math.floor((xWorld * scale) / tileSize);
+  const yTile = Math.floor((yWorld * scale) / tileSize);
+  return {
+    xTile,
+    yTile,
+    xPixel: Math.floor(xWorld * scale) - xTile * tileSize,
+    yPixel: Math.floor(yWorld * scale) - yTile * tileSize,
+  };
+}
+
+/**
  * Reads a file and returns a Promise with the file data.
  * @param {string} filename - Path to the file to read.
  * @returns {Promise<Buffer>} - A Promise that resolves with the file data as a Buffer or rejects with an error.
