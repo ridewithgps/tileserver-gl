@@ -19,7 +19,7 @@ spec:
     projected:
       sources:
       - secret:
-          name: regcred
+          name: harbor-push
           items:
             - key: .dockerconfigjson
               path: config.json
